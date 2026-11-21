@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Mapa de Cajamarca</title>
+    <link rel="stylesheet" href="leaflet/leaflet.css" />
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background-color: #E5E8DC;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #map {
+            position: fixed;
+            inset: 0;
+            background: #E5E8DC;
+        }
+        #map-status {
+            position: fixed;
+            z-index: 1000;
+            bottom: 26px;
+            left: 54px;
+            right: 76px;
+            margin: 0;
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: #233B30;
+            background: #FFFAED;
+            font-size: 14px;
+        }
+        .custom-pin {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .user-marker {
+            width: 16px;
+            height: 16px;
+            background: #10B981;
+            border: 2px solid #FFFFFF;
+            border-radius: 50%;
+            box-shadow: 0 0 10px #10B981;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <p id="map-status" role="status" hidden></p>
+
+    <script src="leaflet/leaflet.js"></script>
+    <script>
+        const CAJAMARCA_CENTER = [-7.1578, -78.5175];
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: true
+        }).setView(CAJAMARCA_CENTER, 12);
+
+        map.attributionControl.setPrefix(false);
+        L.control.zoom({ position: 'bottomleft', zoomInTitle: 'Acercar', zoomOutTitle: 'Alejar' }).addTo(map);
+        const mapStatus = document.getElementById('map-status');
+        const tileTimeout = window.setTimeout(() => {
+            mapStatus.textContent = 'No se pudo cargar el mapa base. Revisa tu conexión.';
+            mapStatus.hidden = false;
+        }, 8000);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).on('tileload', () => {
+            window.clearTimeout(tileTimeout);
+            mapStatus.hidden = true;
+        }).addTo(map);
+
+        new ResizeObserver(() => map.invalidateSize()).observe(document.getElementById('map'));
+
+        let markers = {};
+        let userMarker = null;
+        let visitRoute = null;
+
+        function setDestinations(destinationsJson, fitResults) {
+            try {
+                const destinations = typeof destinationsJson === 'string' ? JSON.parse(destinationsJson) : destinationsJson;
+                Object.values(markers).forEach(m => map.removeLayer(m));
+                markers = {};
+
+                destinations.forEach(dest => {
+                    const markerIcon = L.divIcon({
+                        className: 'custom-pin',
+                        html: '<div style="background:#315746;color:white;width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);display:flex;align-items:center;justify-content:center;border:2px solid white;box-shadow:0 3px 8px rgba(0,0,0,0.35);"><span style="transform:rotate(45deg);width:8px;height:8px;border-radius:50%;background:#F3D779;"></span></div>',
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 32]
+                    });
+
+                    const marker = L.marker([dest.latitude, dest.longitude], { icon: markerIcon, alt: dest.name, title: dest.name }).addTo(map);
+                    marker.on('click', function() {
+                        if (window.AndroidBridge && window.AndroidBridge.onDestinationClick) {
+                            window.AndroidBridge.onDestinationClick(dest.id);
+                        }
+                    });
+                    markers[dest.id] = marker;
+                });
+                map.invalidateSize();
+                if (fitResults && destinations.length > 0) {
+                    map.fitBounds(destinations.map(dest => [dest.latitude, dest.longitude]), {
+                        paddingTopLeft: [36, 155],
+                        paddingBottomRight: [36, 54],
+                        maxZoom: 15,
+                        animate: false
+                    });
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function updateUserLocation(lat, lng) {
+            if (!userMarker) {
+                const userIcon = L.divIcon({
+                    className: 'custom-pin',
+                    html: '<div class="user-marker"></div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                });
+                userMarker = L.marker([lat, lng], { icon: userIcon }).addTo(map);
+            } else {
+                userMarker.setLatLng([lat, lng]);
+            }
+        }
+
+        function showVisit(lat, lng, points) {
+            const routeCredit = 'Ruta: OSRM · <a href="https://www.openstreetmap.org/fixthemap">Corregir mapa</a>';
+            if (visitRoute) {
+                visitRoute.remove();
+                visitRoute = null;
+                map.attributionControl.removeAttribution(routeCredit);
+            }
+            if (points.length < 2) {
+                if (!userMarker) map.setView([lat, lng], 15);
+                return;
+            }
+
+            map.attributionControl.addAttribution(routeCredit);
+            const outline = L.polyline(points, { color: '#FFFDF8', weight: 9, interactive: false });
+            const line = L.polyline(points, { color: '#315746', weight: 5, interactive: false });
+            visitRoute = L.layerGroup([outline, line]).addTo(map);
+            if (!userMarker) map.fitBounds(line.getBounds().extend([lat, lng]), { padding: [36, 36], maxZoom: 15 });
+        }
+
+        function clearUserLocation() {
+            if (userMarker) userMarker.remove();
+            userMarker = null;
+        }
+
+        function followUser(lat, lng) {
+            const wasFollowing = userMarker !== null;
+            updateUserLocation(lat, lng);
+            if (wasFollowing) map.panTo([lat, lng], { animate: false });
+            else map.setView([lat, lng], 16);
+        }
+
+        function centerOnUser(lat, lng) {
+            updateUserLocation(lat, lng);
+            map.flyTo([lat, lng], 14, { duration: 1.2 });
+        }
+    </script>
+</body>
+</html>

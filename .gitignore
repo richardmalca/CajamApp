@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+**/build/
+.idea/
+*.iml
+local.properties
+.env
+.env.*
+*.jks
+*.keystore
+*.p12
+*.apk
+*.aab
+/cajamapp_*.png
+/win_nav.xml
+/window_dump*.xml
